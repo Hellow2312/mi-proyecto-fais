@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualización Completa de Datos FAIS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+</head>
+<body class="bg-gray-100 p-8">
+    <div class="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-md">
+        <h1 class="text-2xl font-bold mb-4">Visualización Completa de Datos FAIS</h1>
+        
+        <input type="file" id="excelFile" accept=".xlsx, .xls" class="mb-4">
+        <div class="grid grid-cols-2 gap-4 mb-4">
+            <select id="estadoSelect" class="p-2 border rounded">
+                <option value="">Seleccione Estado</option>
+            </select>
+            
+            <select id="municipioSelect" class="p-2 border rounded">
+                <option value="">Seleccione Municipio</option>
+            </select>
+            
+            <select id="graphType" class="p-2 border rounded">
+                <option value="">Seleccione Tipo de Gráfica</option>
+                <option value="resumenGeneral">Resumen General del Programa</option>
+                <option value="categoria">Análisis por Categoría</option>
+                <option value="tipoProyecto">Análisis por Tipo de Programa/Proyecto</option>
+                <option value="clasificacion">Análisis por Clasificación</option>
+                <option value="institucion">Análisis por Institución Ejecutora</option>
+                <option value="contratistas">Análisis de Contratistas</option>
+                <option value="impactoPoblacion">Análisis de Impacto en la Población</option>
+                <option value="geografico">Análisis Geográfico</option>
+                <option value="eficienciaEjecucion">Análisis de Eficiencia en la Ejecución</option>
+            </select>
+            
+            <select id="yearSelect" class="p-2 border rounded">
+                <option value="todos">Todos los Años</option>
+            </select>
+        </div>
+        
+        <button id="generateGraph" class="bg-blue-500 text-white px-4 py-2 rounded">Generar Gráfica</button>
+        
+        <div id="graphContainer" class="mt-8">
+            <canvas id="myChart"></canvas>
+            <div id="map" style="height: 400px; display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+    let globalData = [];
+    let myChart = null;
+    let myMap = null;
+
+    document.addEventListener('DOMContentLoaded', function() {
+        document.getElementById('excelFile').addEventListener('change', handleFileUpload);
+        document.getElementById('generateGraph').addEventListener('click', generateGraph);
+        document.getElementById('estadoSelect').addEventListener('change', populateMunicipios);
+    });
+
+    async function handleFileUpload(event) {
+        const file = event.target.files[0];
+        if (file) {
+            try {
+                globalData = await loadExcelData(file);
+                populateSelects(globalData);
+            } catch (error) {
+                console.error("Error al cargar el archivo Excel:", error);
+                alert("Error al cargar el archivo Excel. Por favor, intente de nuevo.");
+            }
+        }
+    }
+
+    async function loadExcelData(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, {type: 'array'});
+                    const sheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[sheetName];
+                    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+                    console.log("Datos Excel cargados exitosamente");
+                    resolve(jsonData);
+                } catch (error) {
+                    console.error("Error al procesar el archivo Excel:", error);
+                    reject(error);
+                }
+            };
+            reader.onerror = (error) => reject(error);
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+    function populateSelects(data) {
+        const estados = [...new Set(data.map(row => row.ESTADO))];
+        const years = [...new Set(data.map(row => row['CICLO DEL RECURSO']))];
+
+        const estadoSelect = document.getElementById('estadoSelect');
+        const yearSelect = document.getElementById('yearSelect');
+
+        estadoSelect.innerHTML = '<option value="">Seleccione Estado</option>';
+        yearSelect.innerHTML = '<option value="todos">Todos los Años</option>';
+
+        estados.forEach(estado => {
+            const option = document.createElement('option');
+            option.value = option.textContent = estado;
+            estadoSelect.appendChild(option);
+        });
+
+        years.forEach(year => {
+            const option = document.createElement('option');
+            option.value = option.textContent = year;
+            yearSelect.appendChild(option);
+        });
+    }
+
+    function populateMunicipios() {
+        const selectedEstado = document.getElementById('estadoSelect').value;
+        const municipios = [...new Set(globalData.filter(row => row.ESTADO === selectedEstado).map(row => row.MUNICIPIO))];
+        const municipioSelect = document.getElementById('municipioSelect');
+        municipioSelect.innerHTML = '<option value="">Seleccione Municipio</option>';
+        municipios.forEach(municipio => {
+            const option = document.createElement('option');
+            option.value = option.textContent = municipio;
+            municipioSelect.appendChild(option);
+        });
+    }
+
+    function generateGraph() {
+        const graphType = document.getElementById('graphType').value;
+        const selectedYear = document.getElementById('yearSelect').value;
+        const selectedEstado = document.getElementById('estadoSelect').value;
+        const selectedMunicipio = document.getElementById('municipioSelect').value;
+        
+        if (!graphType || !selectedEstado || !selectedMunicipio) {
+            alert('Por favor, seleccione todos los campos requeridos.');
+            return;
+        }
+        
+        let filteredData = globalData.filter(row => 
+            (selectedYear === 'todos' || row['CICLO DEL RECURSO'] == selectedYear) &&
+            row.ESTADO === selectedEstado &&
+            row.MUNICIPIO === selectedMunicipio
+        );
+        
+        if (filteredData.length === 0) {
+            alert('No hay datos para la selección actual.');
+            return;
+        }
+
+        let chartData;
+        switch(graphType) {
+            case 'resumenGeneral':
+                chartData = processResumenGeneral(filteredData);
+                break;
+            case 'categoria':
+                chartData = processDistribucionPorCategoria(filteredData);
+                break;
+            case 'tipoProyecto':
+                chartData = processDistribucionPorTipoProyecto(filteredData);
+                break;
+            case 'clasificacion':
+                chartData = processAnalisisPorClasificacion(filteredData);
+                break;
+            case 'institucion':
+                chartData = processMontoPorInstitucion(filteredData);
+                break;
+            case 'contratistas':
+                chartData = processAnalisisContratistas(filteredData);
+                break;
+            case 'impactoPoblacion':
+                chartData = processImpactoPoblacion(filteredData);
+                break;
+            case 'geografico':
+                processAnalisisGeografico(filteredData);
+                return;
+            case 'eficienciaEjecucion':
+                chartData = processEficienciaEjecucion(filteredData);
+                break;
+            default:
+                alert('Por favor, seleccione un tipo de gráfica válido.');
+                return;
+        }
+        
+        renderChart(chartData, graphType);
+    }
+
+function processResumenGeneral(data) {
+    const resumenPorAno = data.reduce((acc, row) => {
+        const year = row['CICLO DEL RECURSO'];
+        if (!acc[year]) acc[year] = { aprobado: 0, ejercido: 0, pagado: 0 };
+        acc[year].aprobado += parseFloat(row.APROBADO) || 0;
+        acc[year].ejercido += parseFloat(row.EJERCIDO) || 0;
+        acc[year].pagado += parseFloat(row.PAGADO) || 0;
+        return acc;
+    }, {});
+
+    return {
+        labels: Object.keys(resumenPorAno),
+        datasets: [
+            {
+                label: 'Monto Aprobado',
+                data: Object.values(resumenPorAno).map(v => v.aprobado),
+                backgroundColor: 'rgba(75, 192, 192, 0.6)'
+            },
+            {
+                label: 'Monto Ejercido',
+                data: Object.values(resumenPorAno).map(v => v.ejercido),
+                backgroundColor: 'rgba(153, 102, 255, 0.6)'
+            },
+            {
+                label: 'Monto Pagado',
+                data: Object.values(resumenPorAno).map(v => v.pagado),
+                backgroundColor: 'rgba(255, 159, 64, 0.6)'
+            }
+        ]
+    };
+}
+
+function processDistribucionPorCategoria(data) {
+    const distribucion = data.reduce((acc, row) => {
+        const categoria = row.CATEGORIA;
+        if (!acc[categoria]) acc[categoria] = 0;
+        acc[categoria] += parseFloat(row.APROBADO) || 0;
+        return acc;
+    }, {});
+
+    const sortedData = Object.entries(distribucion)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+    return {
+        labels: sortedData.map(item => item[0]),
+        datasets: [{
+            label: 'Monto Aprobado',
+            data: sortedData.map(item => item[1]),
+            backgroundColor: 'rgba(75, 192, 192, 0.6)',
+            borderColor: 'rgba(75, 192, 192, 1)',
+            borderWidth: 1
+        }]
+    };
+}
+
+function processDistribucionPorTipoProyecto(data) {
+    const distribucion = data.reduce((acc, row) => {
+        const tipo = row.TIPO_PROGRAMA_PROYECTO;
+        if (!acc[tipo]) acc[tipo] = 0;
+        acc[tipo] += parseFloat(row.APROBADO) || 0;
+        return acc;
+    }, {});
+
+    // Ordenar los tipos de proyecto por monto
+    const sortedData = Object.entries(distribucion)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10); // Limitamos a los 10 principales tipos de proyecto
+
+    return {
+        labels: sortedData.map(item => item[0]),
+        datasets: [{
+            label: 'Monto Aprobado',
+            data: sortedData.map(item => item[1]),
+            backgroundColor: 'rgba(54, 162, 235, 0.6)',
+            borderColor: 'rgba(54, 162, 235, 1)',
+            borderWidth: 1
+        }]
+    };
+}
+
+function processAnalisisPorClasificacion(data) {
+    const clasificaciones = data.reduce((acc, row) => {
+        const clasificacion = row.CLASIFICACION;
+        if (!acc[clasificacion]) acc[clasificacion] = 0;
+        acc[clasificacion] += parseFloat(row.APROBADO) || 0;
+        return acc;
+    }, {});
+
+    // Ordenar las clasificaciones por monto
+    const sortedData = Object.entries(clasificaciones)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10); // Limitamos a las 10 principales clasificaciones
+
+    return {
+        labels: sortedData.map(item => item[0]),
+        datasets: [{
+            label: 'Monto Aprobado',
+            data: sortedData.map(item => item[1]),
+            backgroundColor: 'rgba(255, 206, 86, 0.6)',
+            borderColor: 'rgba(255, 206, 86, 1)',
+            borderWidth: 1
+        }]
+    };
+}
+
+function processMontoPorInstitucion(data) {
+    const montosPorInstitucion = data.reduce((acc, row) => {
+        const institucion = row.INSTITUCION_EJECUTORA;
+        if (institucion && institucion.trim() !== '') {  // Asegurarse de que el campo institución no esté vacío
+            if (!acc[institucion]) acc[institucion] = 0;
+            acc[institucion] += parseFloat(row.APROBADO) || 0;
+        }
+        return acc;
+    }, {});
+
+    const topInstituciones = Object.entries(montosPorInstitucion)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+    return {
+        labels: topInstituciones.map(i => i[0]),
+        datasets: [{
+            label: 'Monto Aprobado',
+            data: topInstituciones.map(i => i[1]),
+            backgroundColor: 'rgba(75, 192, 192, 0.6)'
+        }]
+    };
+}
+
+
+function processAnalisisContratistas(data) {
+    const contratistasMonto = data.reduce((acc, row) => {
+        const contratista = row.CONTRATISTA;
+        if (contratista && contratista.trim() !== '') {  // Asegurarse de que el campo contratista no esté vacío
+            if (!acc[contratista]) acc[contratista] = 0;
+            acc[contratista] += parseFloat(row.MONTOc) || 0;
+        }
+        return acc;
+    }, {});
+
+    const topContratistas = Object.entries(contratistasMonto)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+    return {
+        labels: topContratistas.map(c => c[0]),
+        datasets: [{
+            label: 'Monto de Contratos',
+            data: topContratistas.map(c => c[1]),
+            backgroundColor: 'rgba(75, 192, 192, 0.6)'
+        }]
+    };
+}
+
+    function processImpactoPoblacion(data) {
+        const impactoPorAno = data.reduce((acc, row) => {
+            const year = row['CICLO DEL RECURSO'];
+            if (!acc[year]) acc[year] = { mujeres: 0, hombres: 0 };
+            acc[year].mujeres += parseInt(row.MUJERES) || 0;
+acc[year].hombres += parseInt(row.HOMBRES) || 0;
+            return acc;
+        }, {});
+
+        return {
+            labels: Object.keys(impactoPorAno),
+            datasets: [
+                {
+                    label: 'Mujeres Beneficiadas',
+                    data: Object.values(impactoPorAno).map(v => v.mujeres),
+                    backgroundColor: 'rgba(255, 99, 132, 0.6)'
+                },
+                {
+                    label: 'Hombres Beneficiados',
+                    data: Object.values(impactoPorAno).map(v => v.hombres),
+                    backgroundColor: 'rgba(54, 162, 235, 0.6)'
+                }
+            ]
+        };
+    }
+
+    function processAnalisisGeografico(data) {
+        if (myMap) {
+            myMap.remove();
+        }
+        
+        document.getElementById('myChart').style.display = 'none';
+        const mapDiv = document.getElementById('map');
+        mapDiv.style.display = 'block';
+        
+        let latitudes = [];
+        let longitudes = [];
+        data.forEach(row => {
+            if (row.LATITUD && row.LONGITUD) {
+                latitudes.push(parseFloat(row.LATITUD));
+                longitudes.push(parseFloat(row.LONGITUD));
+            }
+        });
+        
+        let centerLat = (Math.min(...latitudes) + Math.max(...latitudes)) / 2;
+        let centerLon = (Math.min(...longitudes) + Math.max(...longitudes)) / 2;
+        
+        myMap = L.map('map').setView([centerLat, centerLon], 7);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(myMap);
+
+        data.forEach(row => {
+            if (row.LATITUD && row.LONGITUD) {
+                L.circleMarker([row.LATITUD, row.LONGITUD], {
+                    radius: 5,
+                    fillColor: "#ff7800",
+                    color: "#000",
+                    weight: 1,
+                    opacity: 1,
+                    fillOpacity: 0.8
+                }).addTo(myMap).bindPopup(`
+                    <b>${row.NOMBRE}</b><br>
+                    Monto: $${row.APROBADO}<br>
+                    Categoría: ${row.CATEGORIA}
+                `);
+            }
+        });
+    }
+
+function processEficienciaEjecucion(data) {
+    const eficienciaPorProyecto = data
+        .filter(row => row.NOMBRE && row.NOMBRE.trim() !== '')  // Asegurarse de que el campo nombre no esté vacío
+        .map(row => ({
+            nombre: row.NOMBRE.substring(0, 30) + '...', // Acortar nombres largos
+            aprobado: parseFloat(row.APROBADO) || 0,
+            ejercido: parseFloat(row.EJERCIDO) || 0
+        }))
+        .sort((a, b) => b.aprobado - a.aprobado)
+        .slice(0, 10);
+
+    return {
+        labels: eficienciaPorProyecto.map(p => p.nombre),
+        datasets: [
+            {
+                label: 'Monto Aprobado',
+                data: eficienciaPorProyecto.map(p => p.aprobado),
+                backgroundColor: 'rgba(75, 192, 192, 0.6)'
+            },
+            {
+                label: 'Monto Ejercido',
+                data: eficienciaPorProyecto.map(p => p.ejercido),
+                backgroundColor: 'rgba(153, 102, 255, 0.6)'
+            }
+        ]
+    };
+}
+
+function renderChart(data, type) {
+    const ctx = document.getElementById('myChart').getContext('2d');
+    document.getElementById('myChart').style.display = 'block';
+    document.getElementById('map').style.display = 'none';
+    
+    if (myChart) {
+        myChart.destroy();
+    }
+    
+    const chartTypeInfo = getChartType(type);
+    
+    let chartConfig = {
+        type: chartTypeInfo.type,
+        data: data,
+        options: {
+            indexAxis: chartTypeInfo.orientation === 'horizontal' ? 'y' : 'x',
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: 'top',
+                },
+                title: {
+                    display: true,
+                    text: getChartTitle(type)
+                }
+            },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: chartTypeInfo.orientation === 'horizontal' ? 'Monto en pesos' : 'Categoría'
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: type === 'contratistas' ? 'Contratistas' : 
+                             (chartTypeInfo.orientation === 'horizontal' ? 'Categoría' : 'Monto en pesos')
+                    }
+                }
+            }
+        }
+    };
+    
+    myChart = new Chart(ctx, chartConfig);
+}
+
+function getChartType(type) {
+    switch(type) {
+        case 'resumenGeneral': return { type: 'bar', orientation: 'vertical' };
+        case 'categoria': return { type: 'bar', orientation: 'horizontal' };
+        case 'tipoProyecto': return { type: 'bar', orientation: 'horizontal' };
+        case 'clasificacion': return { type: 'bar', orientation: 'vertical' };
+        case 'institucion': return { type: 'bar', orientation: 'horizontal' }; // Cambiado a horizontal
+        case 'contratistas': return { type: 'bar', orientation: 'horizontal' };
+        case 'impactoPoblacion': return { type: 'bar', orientation: 'vertical' };
+        case 'eficienciaEjecucion': return { type: 'bar', orientation: 'horizontal' }; // Cambiado a horizontal
+        default: return { type: 'bar', orientation: 'vertical' };
+    }
+}
+
+    function getChartTitle(type) {
+        switch(type) {
+            case 'resumenGeneral': return 'Resumen General del Programa FAIS';
+            case 'categoria': return 'Distribución por Categoría';
+            case 'tipoProyecto': return 'Distribución por Tipo de Proyecto';
+            case 'clasificacion': return 'Análisis por Clasificación';
+            case 'institucion': return 'Top 10 Instituciones Ejecutoras por Monto Aprobado';
+            case 'contratistas': return 'Top 10 Contratistas por Monto de Contratos';
+            case 'impactoPoblacion': return 'Impacto en la Población por Año';
+            case 'geografico': return 'Distribución Geográfica de Proyectos';
+            case 'eficienciaEjecucion': return 'Eficiencia en la Ejecución: Top 10 Proyectos';
+            default: return 'Visualización de Datos FAIS';
+        }
+    }
+    </script>
+</body>
+</html>
