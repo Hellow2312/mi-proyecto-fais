@@ -372,49 +372,57 @@ acc[year].hombres += parseInt(row.HOMBRES) || 0;
     }
 
     function processAnalisisGeografico(data) {
-        if (myMap) {
-            myMap.remove();
-        }
-        
-        document.getElementById('myChart').style.display = 'none';
-        const mapDiv = document.getElementById('map');
-        mapDiv.style.display = 'block';
-        
-        let latitudes = [];
-        let longitudes = [];
-        data.forEach(row => {
-            if (row.LATITUD && row.LONGITUD) {
-                latitudes.push(parseFloat(row.LATITUD));
-                longitudes.push(parseFloat(row.LONGITUD));
-            }
-        });
-        
-        let centerLat = (Math.min(...latitudes) + Math.max(...latitudes)) / 2;
-        let centerLon = (Math.min(...longitudes) + Math.max(...longitudes)) / 2;
-        
-        myMap = L.map('map').setView([centerLat, centerLon], 7);
-
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors'
-        }).addTo(myMap);
-
-        data.forEach(row => {
-            if (row.LATITUD && row.LONGITUD) {
-                L.circleMarker([row.LATITUD, row.LONGITUD], {
-                    radius: 5,
-                    fillColor: "#ff7800",
-                    color: "#000",
-                    weight: 1,
-                    opacity: 1,
-                    fillOpacity: 0.8
-                }).addTo(myMap).bindPopup(`
-                    <b>${row.NOMBRE}</b><br>
-                    Monto: $${row.APROBADO}<br>
-                    Categoría: ${row.CATEGORIA}
-                `);
-            }
-        });
+    if (myMap) {
+        myMap.remove();
     }
+
+    document.getElementById('myChart').style.display = 'none';
+    const mapDiv = document.getElementById('map');
+    mapDiv.style.display = 'block';
+
+    let latitudes = [];
+    let longitudes = [];
+    data.forEach(row => {
+        if (row.LATITUD && row.LONGITUD) {
+            latitudes.push(parseFloat(row.LATITUD));
+            longitudes.push(parseFloat(row.LONGITUD));
+        }
+    });
+
+    if (latitudes.length === 0 || longitudes.length === 0) {
+        alert("No hay coordenadas válidas para mostrar en el mapa.");
+        return;
+    }
+
+    // Calcular el centroide
+    let centerLat = latitudes.reduce((a, b) => a + b, 0) / latitudes.length;
+    let centerLon = longitudes.reduce((a, b) => a + b, 0) / longitudes.length;
+
+    // Crear el mapa centrado en el centroide calculado
+    myMap = L.map('map').setView([centerLat, centerLon], 10); // Zoom nivel 10
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(myMap);
+
+    data.forEach(row => {
+        if (row.LATITUD && row.LONGITUD) {
+            L.circleMarker([row.LATITUD, row.LONGITUD], {
+                radius: 5,
+                fillColor: "#ff7800",
+                color: "#000",
+                weight: 1,
+                opacity: 1,
+                fillOpacity: 0.8
+            }).addTo(myMap).bindPopup(`
+                <b>${row.NOMBRE}</b><br>
+                Monto: $${row.APROBADO}<br>
+                Categoría: ${row.CATEGORIA}
+            `);
+        }
+    });
+}
+
 
 function processEficienciaEjecucion(data) {
     const eficienciaPorProyecto = data
@@ -463,27 +471,27 @@ function renderChart(data, type) {
             responsive: true,
             plugins: {
                 legend: {
-                    position: 'top',
+                    position: 'top', // Cambia o elimina esta configuración si no quieres ver la leyenda
+                    display: false  // Agrega esta línea para ocultar la leyenda
                 },
                 title: {
-                    display: true,
-                    text: getChartTitle(type)
+                    display: false, // Cambia esta línea para ocultar el título
+                    text: '' // Asegúrate de que el título esté vacío si aún quieres un espacio pero sin texto
                 }
             },
             scales: {
                 x: {
                     beginAtZero: true,
                     title: {
-                        display: true,
-                        text: chartTypeInfo.orientation === 'horizontal' ? 'Monto en pesos' : 'Categoría'
+                        display: false, // Ocultar el título del eje X si eso es lo que deseas
+                        text: ''
                     }
                 },
                 y: {
                     beginAtZero: true,
                     title: {
-                        display: true,
-                        text: type === 'contratistas' ? 'Contratistas' : 
-                             (chartTypeInfo.orientation === 'horizontal' ? 'Categoría' : 'Monto en pesos')
+                        display: false, // Ocultar el título del eje Y si eso es lo que deseas
+                        text: ''
                     }
                 }
             }
