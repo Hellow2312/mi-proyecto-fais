@@ -3,18 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Visualización Completa de Datos FAIS</title>
+    <title>Generación de Gráficas y PDFs</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.4.0/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/0.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
 </head>
 <body class="bg-gray-100 p-8">
     <div class="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-md">
-        <h1 class="text-2xl font-bold mb-4">Visualización Completa de Datos FAIS</h1>
+        <h1 class="text-2xl font-bold mb-4">Generación de Gráficas y PDFs</h1>
         
         <input type="file" id="excelFile" accept=".xlsx, .xls" class="mb-4">
         <div class="grid grid-cols-2 gap-4 mb-4">
@@ -26,41 +26,31 @@
                 <option value="">Seleccione Municipio</option>
             </select>
             
-            <select id="graphType" class="p-2 border rounded">
-                <option value="">Seleccione Tipo de Gráfica</option>
-                <option value="resumenGeneral">Resumen General del Programa</option>
-                <option value="categoria">Análisis por Categoría</option>
-                <option value="tipoProyecto">Análisis por Tipo de Programa/Proyecto</option>
-                <option value="clasificacion">Análisis por Clasificación</option>
-                <option value="institucion">Análisis por Institución Ejecutora</option>
-                <option value="contratistas">Análisis de Contratistas</option>
-                <option value="impactoPoblacion">Análisis de Impacto en la Población</option>
-                <option value="geografico">Análisis Geográfico</option>
-                <option value="eficienciaEjecucion">Análisis de Eficiencia en la Ejecución</option>
-            </select>
-            
             <select id="yearSelect" class="p-2 border rounded">
                 <option value="todos">Todos los Años</option>
             </select>
         </div>
         
-        <button id="generateGraph" class="bg-blue-500 text-white px-4 py-2 rounded">Generar Gráfica</button>
-        <p id="pdfStatus" class="mt-4 text-gray-600"></p>
-
+        <button id="generateGraph" class="bg-blue-500 text-white px-4 py-2 rounded">Generar Gráficas y PDFs</button>
+        
+        <div class="w-full bg-gray-200 rounded-full h-4 mt-4">
+            <div id="progressBar" class="bg-blue-500 h-4 rounded-full" style="width: 0%;"></div>
+        </div>
+        
         <div id="graphContainer" class="mt-8">
             <canvas id="myChart"></canvas>
             <div id="map" style="height: 400px; display: none;"></div>
         </div>
     </div>
 
-    <script>
+   <script>
     let globalData = [];
     let myChart = null;
     let myMap = null;
 
     document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('excelFile').addEventListener('change', handleFileUpload);
-        document.getElementById('generateGraph').addEventListener('click', generateGraph);
+        document.getElementById('generateGraph').addEventListener('click', generateAllGraphsAndPDFs);
         document.getElementById('estadoSelect').addEventListener('change', populateMunicipios);
     });
 
@@ -134,17 +124,27 @@
         });
     }
 
-    function generateGraph() {
-        const graphType = document.getElementById('graphType').value;
+    async function generateAllGraphsAndPDFs() {
         const selectedYear = document.getElementById('yearSelect').value;
         const selectedEstado = document.getElementById('estadoSelect').value;
         const selectedMunicipio = document.getElementById('municipioSelect').value;
-        
-        if (!graphType || !selectedEstado || !selectedMunicipio) {
+
+        if (!selectedEstado || !selectedMunicipio) {
             alert('Por favor, seleccione todos los campos requeridos.');
             return;
         }
-        
+
+        const graphTypes = ['resumenGeneral', 'categoria', 'tipoProyecto', 'clasificacion', 'institucion', 'contratistas', 'impactoPoblacion', 'geografico', 'eficienciaEjecucion'];
+        let progressStep = 100 / graphTypes.length;
+
+        for (let i = 0; i < graphTypes.length; i++) {
+            const graphType = graphTypes[i];
+            await generateGraph(graphType, selectedYear, selectedEstado, selectedMunicipio);
+            updateProgressBar((i + 1) * progressStep);
+        }
+    }
+
+    async function generateGraph(graphType, selectedYear, selectedEstado, selectedMunicipio) {
         let filteredData = globalData.filter(row => 
             (selectedYear === 'todos' || row['CICLO DEL RECURSO'] == selectedYear) &&
             row.ESTADO === selectedEstado &&
@@ -181,7 +181,7 @@
                 break;
             case 'geografico':
                 processAnalisisGeografico(filteredData);
-                return;
+                break;
             case 'eficienciaEjecucion':
                 chartData = processEficienciaEjecucion(filteredData);
                 break;
@@ -189,8 +189,20 @@
                 alert('Por favor, seleccione un tipo de gráfica válido.');
                 return;
         }
-        
-        renderChart(chartData, graphType);
+
+        if (graphType !== 'geografico') {
+            renderChart(chartData, graphType);
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await generatePDF(graphType, selectedEstado, selectedMunicipio, selectedYear);
+        } else {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await generatePDF(graphType, selectedEstado, selectedMunicipio, selectedYear);
+        }
+    }
+
+    function updateProgressBar(percentage) {
+        const progressBar = document.getElementById('progressBar');
+        progressBar.style.width = `${percentage}%`;
     }
 
 function processResumenGeneral(data) {
@@ -257,7 +269,6 @@ function processDistribucionPorTipoProyecto(data) {
         return acc;
     }, {});
 
-    // Ordenar los tipos de proyecto por monto
     const sortedData = Object.entries(distribucion)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 10); // Limitamos a los 10 principales tipos de proyecto
@@ -282,7 +293,6 @@ function processAnalisisPorClasificacion(data) {
         return acc;
     }, {});
 
-    // Ordenar las clasificaciones por monto
     const sortedData = Object.entries(clasificaciones)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 10); // Limitamos a las 10 principales clasificaciones
@@ -375,49 +385,71 @@ acc[year].hombres += parseInt(row.HOMBRES) || 0;
     }
 
     function processAnalisisGeografico(data) {
-        if (myMap) {
-            myMap.remove();
-        }
-        
-        document.getElementById('myChart').style.display = 'none';
-        const mapDiv = document.getElementById('map');
-        mapDiv.style.display = 'block';
-        
-        let latitudes = [];
-        let longitudes = [];
-        data.forEach(row => {
-            if (row.LATITUD && row.LONGITUD) {
-                latitudes.push(parseFloat(row.LATITUD));
-                longitudes.push(parseFloat(row.LONGITUD));
-            }
-        });
-        
-        let centerLat = (Math.min(...latitudes) + Math.max(...latitudes)) / 2;
-        let centerLon = (Math.min(...longitudes) + Math.max(...longitudes)) / 2;
-        
-        myMap = L.map('map').setView([centerLat, centerLon], 7);
-
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors'
-        }).addTo(myMap);
-
-        data.forEach(row => {
-            if (row.LATITUD && row.LONGITUD) {
-                L.circleMarker([row.LATITUD, row.LONGITUD], {
-                    radius: 5,
-                    fillColor: "#ff7800",
-                    color: "#000",
-                    weight: 1,
-                    opacity: 1,
-                    fillOpacity: 0.8
-                }).addTo(myMap).bindPopup(`
-                    <b>${row.NOMBRE}</b><br>
-                    Monto: $${row.APROBADO}<br>
-                    Categoría: ${row.CATEGORIA}
-                `);
-            }
-        });
+    if (myMap) {
+        myMap.remove();
     }
+    
+    document.getElementById('myChart').style.display = 'none';
+    const mapDiv = document.getElementById('map');
+    mapDiv.style.display = 'block';
+    
+    let latitudes = [];
+    let longitudes = [];
+    data.forEach(row => {
+        if (row.LATITUD && row.LONGITUD) {
+            latitudes.push(parseFloat(row.LATITUD));
+            longitudes.push(parseFloat(row.LONGITUD));
+        }
+    });
+    
+    let centerLat = (Math.min(...latitudes) + Math.max(...latitudes)) / 2;
+    let centerLon = (Math.min(...longitudes) + Math.max(...longitudes)) / 2;
+    
+    // Ajustar el nivel de zoom basado en la distancia máxima entre los puntos
+    let maxDistance = Math.max(
+        Math.max(...latitudes) - Math.min(...latitudes),
+        Math.max(...longitudes) - Math.min(...longitudes)
+    );
+    
+    // Determinar el nivel de zoom basado en la distancia máxima
+    let zoomLevel;
+    if (maxDistance < 0.01) {
+        zoomLevel = 15; // Muy cerca
+    } else if (maxDistance < 0.05) {
+        zoomLevel = 13; // Relativamente cerca
+    } else if (maxDistance < 0.1) {
+        zoomLevel = 11; // Un poco más lejos
+    } else if (maxDistance < 0.5) {
+        zoomLevel = 9; // Lejos
+    } else {
+        zoomLevel = 7; // Muy lejos
+    }
+    
+    myMap = L.map('map').setView([centerLat, centerLon], zoomLevel);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(myMap);
+
+    data.forEach(row => {
+        if (row.LATITUD && row.LONGITUD) {
+            L.circleMarker([row.LATITUD, row.LONGITUD], {
+                radius: 5,
+                fillColor: "#ff7800",
+                color: "#000",
+                weight: 1,
+                opacity: 1,
+                fillOpacity: 0.8
+            }).addTo(myMap).bindPopup(`
+                <b>${row.NOMBRE}</b><br>
+                Monto: $${row.APROBADO}<br>
+                Categoría: ${row.CATEGORIA}
+            `);
+        }
+    });
+}
+
+
 
 function processEficienciaEjecucion(data) {
     const eficienciaPorProyecto = data
@@ -494,9 +526,6 @@ function renderChart(data, type) {
     };
     
     myChart = new Chart(ctx, chartConfig);
-
-    // Llamar a la función para generar el PDF automáticamente después de renderizar la gráfica
-    setTimeout(generatePDF, 1000); // Esperar 1 segundo para asegurarse de que la gráfica esté renderizada
 }
 
 function getChartType(type) {
@@ -513,62 +542,62 @@ function getChartType(type) {
     }
 }
 
-    function getChartTitle(type) {
-        switch(type) {
-            case 'resumenGeneral': return 'Resumen General del Programa FAIS';
-            case 'categoria': return 'Distribución por Categoría';
-            case 'tipoProyecto': return 'Distribución por Tipo de Proyecto';
-            case 'clasificacion': return 'Análisis por Clasificación';
-            case 'institucion': return 'Top 10 Instituciones Ejecutoras por Monto Aprobado';
-            case 'contratistas': return 'Top 10 Contratistas por Monto de Contratos';
-            case 'impactoPoblacion': return 'Impacto en la Población por Año';
-            case 'geografico': return 'Distribución Geográfica de Proyectos';
-            case 'eficienciaEjecucion': return 'Eficiencia en la Ejecución: Top 10 Proyectos';
-            default: return 'Visualización de Datos FAIS';
-        }
+function getChartTitle(type) {
+    switch(type) {
+        case 'resumenGeneral': return 'Resumen General del Programa';
+        case 'categoria': return 'Distribución por Categoría';
+        case 'tipoProyecto': return 'Distribución por Tipo de Proyecto';
+        case 'clasificacion': return 'Análisis por Clasificación';
+        case 'institucion': return 'Top 10 Instituciones Ejecutoras por Monto Aprobado';
+        case 'contratistas': return 'Top 10 Contratistas por Monto de Contratos';
+        case 'impactoPoblacion': return 'Impacto en la Población por Año';
+        case 'geografico': return 'Distribución Geográfica de Proyectos';
+        case 'eficienciaEjecucion': return 'Eficiencia en la Ejecución: Top 10 Proyectos';
+        default: return 'Visualización de Datos';
     }
+}
 
-    function generatePDF() {
-        const statusElement = document.getElementById('pdfStatus');
-        statusElement.textContent = 'Generando PDF...';
-
-        const selectedYear = document.getElementById('yearSelect').value;
-        const selectedEstado = document.getElementById('estadoSelect').value;
-        const selectedMunicipio = document.getElementById('municipioSelect').value;
-        const graphType = document.getElementById('graphType').value;
-        
-        const chartTitle = getChartTitle(graphType);
-        const programInfo = `Programa: ${selectedMunicipio} - ${selectedEstado}`;
-        const yearInfo = `Año: ${selectedYear}`;
-
-        // Configuración del documento PDF
+async function generatePDF(graphType, estado, municipio, year) {
+    try {
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF();
-
-        // Añadir título al PDF
-        doc.setFontSize(18);
-        doc.text(chartTitle, 20, 20);
         
-        // Añadir información del programa y año
+        doc.setFontSize(18);
+        doc.text('Análisis de Datos', 105, 20, null, null, 'center');
+        
+        doc.setFontSize(14);
+        doc.text(getChartTitle(graphType), 105, 30, null, null, 'center');
+        
         doc.setFontSize(12);
-        doc.text(programInfo, 20, 30);
-        doc.text(yearInfo, 20, 40);
-
-        // Capturar el gráfico como una imagen
-        html2canvas(document.getElementById('myChart')).then(canvas => {
+        doc.text(`Estado: ${estado}`, 20, 50);
+        doc.text(`Municipio: ${municipio}`, 20, 60);
+        doc.text(`Año: ${year === 'todos' ? 'Todos los años' : year}`, 20, 70);
+        
+        if (graphType !== 'geografico') {
+            const canvas = document.getElementById('myChart');
+            const imgData = await new Promise(resolve => {
+                canvas.toBlob(blob => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result);
+                    reader.readAsDataURL(blob);
+                });
+            });
+            doc.addImage(imgData, 'PNG', 15, 80, 180, 100);
+        } else {
+            const mapElement = document.getElementById('map');
+            const canvas = await html2canvas(mapElement);
             const imgData = canvas.toDataURL('image/png');
-            doc.addImage(imgData, 'PNG', 20, 50, 160, 90); // Ajusta la posición y el tamaño según sea necesario
-
-            // Guardar el PDF con un nombre descriptivo
-            doc.save(`Analisis_${graphType}_${selectedMunicipio}_${selectedEstado}_${selectedYear}.pdf`);
-
-            // Actualizar el estado a "PDF generado con éxito"
-            statusElement.textContent = 'PDF generado con éxito';
-        }).catch(error => {
-            console.error('Error generando el PDF:', error);
-            statusElement.textContent = 'Error al generar el PDF';
-        });
+            doc.addImage(imgData, 'PNG', 15, 80, 180, 100);
+        }
+        
+        // Guardar el PDF con el nombre que incluye el año
+        doc.save(`Analisis_${graphType}_${estado}_${municipio}_${year === 'todos' ? 'Todos' : year}.pdf`);
+    } catch (error) {
+        console.error("Error al generar el PDF:", error);
+        alert(`Error al generar el PDF: ${error.message}`);
     }
+}
+
     </script>
 </body>
 </html>
